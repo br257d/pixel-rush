@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pixel Rush — Fliperama</title>
+<!-- Firebase (necessário para o mural funcionar fora do Claude) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+
+  :root{
+    --bg-outer:#05050a;
+    --metal-1:#3c3c48;
+    --metal-2:#111116;
+    --screen-bg:#0a1420;
+    --cyan:#00f5d4;
+    --magenta:#ff2e6c;
+    --yellow:#ffd23f;
+    --green:#39ff88;
+    --text:#eaf6f6;
+    --pix:5px;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    min-height:100vh;
+    background:
+      radial-gradient(ellipse at 50% 0%, #14141f 0%, var(--bg-outer) 60%);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:18px 12px;
+    font-family:'VT323', monospace;
+    color:var(--text);
+  }
+
+  .outer{ position:relative; width:100%; max-width:460px; }
+
+  .mute-btn{
+    position:absolute; top:-8px; right:-8px; z-index:5;
+    width:34px;height:34px;border-radius:50%;
+    background:var(--metal-2); color:var(--text); border:2px solid #000;
+    font-size:15px; cursor:pointer; line-height:1;
+  }
+
+  .cabinet{
+    background:linear-gradient(160deg, var(--metal-1), var(--metal-2) 70%);
+    border-radius:20px;
+    padding:12px 12px 20px;
+    box-shadow:0 24px 60px rgba(0,0,0,.65), inset 0 0 0 2px #000;
+  }
+
+  .marquee{
+    text-align:center;
+    font-family:'Press Start 2P', monospace;
+    font-size:clamp(14px,4.6vw,20px);
+    letter-spacing:2px;
+    padding:14px 6px;
+    background:linear-gradient(180deg,#1a1a2e,#0c0c16);
+    border-radius:10px 10px 0 0;
+    color:var(--yellow);
+    text-shadow:0 0 6px var(--magenta), 0 0 16px rgba(0,245,212,.6);
+    animation:flicker 3.4s infinite steps(1);
+  }
+  @keyframes flicker{
+    0%,19%,21%,23%,25%,54%,56%,100%{opacity:1;}
+    20%,24%,55%{opacity:.82;}
+  }
+
+  .screen{
+    position:relative;
+    background:var(--screen-bg);
+    border:3px solid #000;
+    border-radius:0 0 12px 12px;
+    padding:16px 14px 18px;
+    min-height:460px;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+  }
+  .screen.shake{ animation:shake .3s linear; }
+  @keyframes shake{
+    10%,90%{transform:translateX(-1px);}
+    20%,80%{transform:translateX(2px);}
+    30%,50%,70%{transform:translateX(-5px);}
+    40%,60%{transform:translateX(5px);}
+  }
+  .scanoverlay{
+    position:absolute; inset:0; pointer-events:none; z-index:3;
+    background:repeating-linear-gradient(
+      to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
+      rgba(0,0,0,.18) 3px, rgba(0,0,0,0) 4px
+    );
+    mix-blend-mode:overlay;
+  }
+
+  .view{ display:none; flex-direction:column; gap:14px; flex:1; position:relative; z-index:1; }
+  .view.active{ display:flex; }
+
+  /* ---- START VIEW ---- */
+  #view-start{ text-align:center; align-items:center; justify-content:center; padding:6px 4px; }
+  .lead{ font-size:22px; margin:0; color:var(--cyan); }
+  .rules{ list-style:none; padding:0; margin:0; text-align:left; font-size:19px; display:flex; flex-direction:column; gap:8px; }
+  .rules li{ display:flex; align-items:center; gap:10px; }
+  .chip{ width:18px; height:18px; border-radius:4px; flex:0 0 auto; }
+  .chip-good{ background:var(--yellow); box-shadow:0 0 0 2px #7a5b00 inset; }
+  .chip-bad{ background:#2b2b2b; box-shadow:0 0 0 2px #000 inset; }
+  .chip-monster{ background:#39ff88; box-shadow:0 0 0 2px #12331f inset; }
+
+  /* ---- Buttons ---- */
+  .btn-arcade{
+    font-family:'Press Start 2P', monospace;
+    font-size:11px;
+    padding:14px 16px;
+    background:var(--magenta);
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    box-shadow:0 5px 0 #7a0f30, 0 8px 16px rgba(0,0,0,.4);
+    cursor:pointer;
+    letter-spacing:1px;
+    transition:transform .05s;
+  }
+  .btn-arcade:active{ transform:translateY(4px); box-shadow:0 1px 0 #7a0f30; }
+  .btn-arcade:disabled{ opacity:.6; cursor:default; }
+  .btn-link{
+    background:none; border:none; color:var(--cyan); text-decoration:underline;
+    font-family:'VT323',monospace; font-size:18px; cursor:pointer; padding:4px;
+  }
+
+  /* ---- PLAY VIEW ---- */
+  .hud{ display:flex; justify-content:space-between; align-items:flex-start; font-family:'Press Start 2P',monospace; font-size:10px; color:var(--text); }
+  .hud-item{ text-align:center; line-height:1.9; }
+  .hud-item span{ color:var(--yellow); font-size:13px; }
+  #hud-lives{ display:flex; gap:4px; align-items:center; }
+  .heart-slot{ width:calc(7*var(--pix)); height:calc(6*var(--pix)); position:relative; opacity:1; transition:opacity .3s; }
+  .heart-slot.lost{ opacity:.15; }
+  .heart-px{ position:absolute; top:0; left:0; width:var(--pix); height:var(--pix); background:transparent; }
+
+  .wave-bar-track{ height:8px; background:#000; border-radius:4px; overflow:hidden; box-shadow:inset 0 0 0 1px #222; }
+  .wave-bar-fill{ height:100%; width:100%; background:linear-gradient(90deg,var(--cyan),var(--magenta)); transition:width .12s linear; }
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:9px;
+    flex:1;
+    position:relative;
+  }
+  .hole{
+    position:relative;
+    aspect-ratio:1;
+    border-radius:10px;
+    background:radial-gradient(circle at 50% 62%, #020204 0%, #0e1a12 75%);
+    border:2px solid #16261c;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    touch-action:manipulation;
+    overflow:visible;
+  }
+  .sprite-wrap{ position:relative; }
+  .sprite-px{ position:absolute; top:0; left:0; width:var(--pix); height:var(--pix); background:transparent; animation:pop .14s ease-out; }
+  .sprite-wrap.leaving-good .sprite-px{ animation:leaveGood .16s ease-in forwards; }
+  .sprite-wrap.leaving-bad .sprite-px{ animation:leaveBad .16s ease-in forwards; }
+  .sprite-wrap.leaving-timeout .sprite-px{ animation:leaveTimeout .18s ease-in forwards; }
+  @keyframes pop{ from{transform:scale(.2); opacity:0;} to{transform:scale(1); opacity:1;} }
+  @keyframes leaveGood{ to{transform:scale(1.5); opacity:0;} }
+  @keyframes leaveBad{ to{transform:scale(.5) rotate(20deg); opacity:0;} }
+  @keyframes leaveTimeout{ to{transform:scale(.7); opacity:0;} }
+
+  .monster-flash{ filter: brightness(2.6) saturate(.3); }
+  .float-score{
+    position:absolute; top:-6px; left:50%; transform:translateX(-50%);
+    font-family:'Press Start 2P',monospace; font-size:11px; color:var(--cyan);
+    pointer-events:none; animation:floatUp .55s ease-out forwards; z-index:4;
+  }
+  @keyframes floatUp{ from{transform:translate(-50%,0); opacity:1;} to{transform:translate(-50%,-34px); opacity:0;} }
+
+  .wave-banner{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:'Press Start 2P',monospace; font-size:15px; color:var(--yellow);
+    background:rgba(6,10,14,.72); text-align:center; padding:20px; border-radius:10px;
+    opacity:0; pointer-events:none; transition:opacity .25s; z-index:5;
+  }
+  .wave-banner.show{ opacity:1; }
+
+  /* ---- END VIEW ---- */
+  #view-end{ text-align:center; align-items:center; }
+  #end-title{ font-family:'Press Start 2P',monospace; font-size:16px; color:var(--yellow); margin:6px 0 0; }
+  #end-sub{ margin:0; font-size:19px; color:var(--cyan); }
+  .score-readout{ font-family:'Press Start 2P',monospace; font-size:26px; color:var(--green); }
+  .tier{ font-size:20px; color:var(--magenta); margin:0 0 6px; }
+
+  #form-publish{ width:100%; display:flex; flex-direction:column; gap:10px; align-items:stretch; }
+  #form-publish label{ text-align:left; font-size:16px; color:var(--cyan); display:flex; flex-direction:column; gap:4px; }
+  #form-publish input, #form-publish textarea{
+    font-family:'VT323',monospace; font-size:18px; padding:9px 10px;
+    border:3px solid #000; border-radius:6px; background:#f4f4f4; color:#111;
+  }
+  #form-publish input:focus, #form-publish textarea:focus{ outline:3px dashed var(--cyan); outline-offset:2px; }
+  #form-publish textarea{ resize:vertical; min-height:56px; }
+  .note{ font-size:14px; color:#8fa; opacity:.8; margin:0; }
+  .form-error{ color:var(--magenta); font-size:15px; margin:0; display:none; }
+  .end-actions{ display:flex; flex-direction:column; gap:8px; align-items:center; margin-top:4px; }
+
+  /* ---- WALL VIEW ---- */
+  #view-wall h2{ font-family:'Press Start 2P',monospace; font-size:15px; color:var(--yellow); text-align:center; margin:6px 0 0; }
+  .wall-status{ text-align:center; font-size:17px; color:var(--cyan); min-height:20px; }
+  .wall-list{ display:flex; flex-direction:column; gap:0; max-height:280px; overflow-y:auto; border-top:1px dashed #244; }
+  .wall-row{ display:flex; gap:10px; padding:9px 4px; border-bottom:1px dashed #244; align-items:flex-start; }
+  .wall-rank{ font-family:'Press Start 2P',monospace; font-size:11px; width:26px; flex:0 0 auto; padding-top:2px; color:#7ad; }
+  .wall-rank.gold{ color:#ffd23f; text-shadow:0 0 6px #ffd23f; }
+  .wall-rank.silver{ color:#d9d9e6; text-shadow:0 0 6px #d9d9e6; }
+  .wall-rank.bronze{ color:#e08a4e; text-shadow:0 0 6px #e08a4e; }
+  .wall-main{ flex:1; min-width:0; }
+  .wall-name-row{ display:flex; justify-content:space-between; gap:8px; font-size:19px; }
+  .wall-name{ color:var(--text); font-weight:bold; overflow-wrap:anywhere; }
+  .wall-score{ font-family:'Press Start 2P',monospace; font-size:11px; color:var(--green); white-space:nowrap; }
+  .wall-comment{ font-size:16px; color:#9fd; margin-top:2px; overflow-wrap:anywhere; font-style:italic; }
+  .wall-comment.empty{ opacity:.5; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
+  }
+
+  @media (max-width:380px){
+    .screen{ padding:12px 9px 14px; min-height:420px; }
+    .grid{ gap:6px; }
+  }
+</style>
+</head>
+<body>
+<div class="outer">
+  <button class="mute-btn" id="btn-mute" aria-label="Alternar som">🔊</button>
+  <div class="cabinet">
+    <div class="marquee">PIXEL RUSH</div>
+    <div class="screen" id="screen">
+      <div class="scanoverlay" aria-hidden="true"></div>
+
+      <section id="view-start" class="view active">
+        <p class="lead">Reflexo de fliperama!</p>
+        <ul class="rules">
+          <li><span class="chip chip-good"></span> Clique nas <b>moedas</b> antes que somem.</li>
+          <li><span class="chip chip-bad"></span> Evite as <b>bombas</b> — custam uma vida.</li>
+          <li><span class="chip chip-monster"></span> Da fase 3 em diante, <b>monstros</b> andam pelos quadrados — não clique neles!</li>
+          <li>Sobreviva às 8 fases. Cada uma fica mais rápida!</li>
+        </ul>
+        <button class="btn-arcade" id="btn-start">INSERIR FICHA</button>
+      </section>
+
+      <section id="view-play" class="view">
+        <div class="hud">
+          <div class="hud-item">PONTOS<br><span id="hud-score">0</span></div>
+          <div class="hud-item">FASE<br><span id="hud-wave">1</span>/8</div>
+          <div class="hud-item" id="hud-lives"></div>
+        </div>
+        <div class="wave-bar-track"><div class="wave-bar-fill" id="wave-bar"></div></div>
+        <div class="grid" id="grid"></div>
+        <div class="wave-banner" id="wave-banner"></div>
+      </section>
+
+      <section id="view-end" class="view">
+        <h2 id="end-title">FIM DE JOGO</h2>
+        <p id="end-sub"></p>
+        <div class="score-readout"><span id="end-score">0</span> PTS</div>
+        <p id="end-tier" class="tier"></p>
+
+        <form id="form-publish">
+          <label>SEU NOME
+            <input id="input-name" maxlength="18" placeholder="Ex: Ana" autocomplete="off" required>
+          </label>
+          <label>COMENTÁRIO (opcional)
+            <textarea id="input-comment" maxlength="140" placeholder="Deixe um recado pro mural..."></textarea>
+          </label>
+          <p class="note">Seu nome e comentário ficam públicos, visíveis para todos que jogarem.</p>
+          <p class="form-error" id="form-error">Digite um nome antes de publicar.</p>
+          <div class="end-actions">
+            <button type="submit" class="btn-arcade" id="btn-publish">GRAVAR NO MURAL</button>
+            <button type="button" class="btn-link" id="btn-skip">pular e ver o mural</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="view-wall" class="view">
+        <h2>HALL DA FAMA</h2>
+        <div class="wall-status" id="wall-status"></div>
+        <div class="wall-list" id="wall-list"></div>
+        <button class="btn-arcade" id="btn-again">JOGAR NOVAMENTE</button>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ======================================================================
+  // CONFIGURE SEU FIREBASE AQUI. Veja o passo a passo que o Claude te deu
+  // pra criar um projeto grátis e pegar esses valores.
+  // ======================================================================
+  var FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCLvyoFpeuMGIfSlvMLuQVEgE4XO4dgXgg",
+    authDomain: "pixel-rush-6d285.firebaseapp.com",
+    databaseURL: "https://pixel-rush-6d285-default-rtdb.firebaseio.com",
+    projectId: "pixel-rush-6d285",
+    storageBucket: "pixel-rush-6d285.firebasestorage.app",
+    messagingSenderId: "857469053280",
+    appId: "1:857469053280:web:9ee77123e88c77e09d1605"
+  };
+  // ======================================================================
+
+  var db = null;
+  var firebaseReady = false;
+  try {
+    if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "COLE_AQUI" && window.firebase) {
+      firebase.initializeApp(FIREBASE_CONFIG);
+      db = firebase.database();
+      firebaseReady = true;
+    }
+  } catch (e) { firebaseReady = false; }
+
+  var PIX = 5;
+  var TOTAL_WAVES = 8;
+  var WAVE_DURATION = 15000;
+  var GRID_SIZE = 16;
+
+  function shadow(rows, colorMap){
+    var out = [];
+    for (var y=0;y<rows.length;y++){
+      for (var x=0;x<rows[y].length;x++){
+        var ch = rows[y][x];
+        if (ch === '.') continue;
+        out.push((x*PIX)+"px "+(y*PIX)+"px 0 0 "+colorMap[ch]);
+      }
+    }
+    return out.join(",");
+  }
+
+  var COIN_ROWS = [
+    "..OOOO..",
+    ".OYYYYO.",
+    "OYYYYYYO",
+    "OYYWYYYO",
+    "OYYYYYYO",
+    "OYYYYYYO",
+    ".OYYYYO.",
+    "..OOOO.."
+  ];
+  var COIN_SHADOW = shadow(COIN_ROWS, {O:"#8a6300", Y:"#ffd23f", W:"#fff6c9"});
+
+  var BOMB_ROWS = [
+    "..S.....",
+    "...OO...",
+    "..OOOO..",
+    ".OKKKKO.",
+    "OKKKKKKO",
+    "OKKKKKKO",
+    ".OKKKKO.",
+    "..OOOO.."
+  ];
+  var BOMB_SHADOW = shadow(BOMB_ROWS, {S:"#ff6b35", O:"#000000", K:"#2b2b2b"});
+
+  var HEART_ROWS = [
+    ".RR.RR.",
+    "RRRRRRR",
+    "RRRRRRR",
+    ".RRRRR.",
+    "..RRR..",
+    "...R..."
+  ];
+  var HEART_SHADOW = shadow(HEART_ROWS, {R:"#ff2e6c"});
+
+  var MONSTER_ROWS = [
+    "..M.....M..",
+    "...M...M...",
+    "..MMMMMMM..",
+    ".MM.MMM.MM.",
+    "MMMMMMMMMMM",
+    "M.MMMMMMM.M",
+    "D.D.....D.D",
+    "...DD.DD..."
+  ];
+  var MONSTER_SHADOW = shadow(MONSTER_ROWS, {M:"#39ff88", D:"#1f9c58"});
+
+  // ---------- audio ----------
+  var audioCtx = null;
+  var muted = false;
+  function beep(freq, dur, type, vol){
+    if (muted) return;
+    try{
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type || 'square';
+      osc.frequency.value = freq;
+      gain.gain.value = vol || 0.04;
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + (dur||0.08));
+      osc.stop(audioCtx.currentTime + (dur||0.08) + 0.02);
+    }catch(e){}
+  }
+
+  // ---------- dom refs ----------
+  var $ = function(id){ return document.getElementById(id); };
+  var views = {
+    start: $('view-start'),
+    play: $('view-play'),
+    end: $('view-end'),
+    wall: $('view-wall')
+  };
+  var gridEl = $('grid');
+  var hudScore = $('hud-score');
+  var hudWave = $('hud-wave');
+  var hudLives = $('hud-lives');
+  var waveBar = $('wave-bar');
+  var waveBanner = $('wave-banner');
+  var screenEl = $('screen');
+  var endTitle = $('end-title');
+  var endSub = $('end-sub');
+  var endScore = $('end-score');
+  var endTier = $('end-tier');
+  var formPublish = $('form-publish');
+  var inputName = $('input-name');
+  var inputComment = $('input-comment');
+  var formError = $('form-error');
+  var btnPublish = $('btn-publish');
+  var wallStatus = $('wall-status');
+  var wallList = $('wall-list');
+
+  function switchView(name){
+    Object.keys(views).forEach(function(k){
+      views[k].classList.toggle('active', k === name);
+    });
+  }
+
+  // ---------- lives hearts ----------
+  var heartSlots = [];
+  function buildHearts(){
+    hudLives.innerHTML = '';
+    heartSlots = [];
+    for (var i=0;i<3;i++){
+      var slot = document.createElement('div');
+      slot.className = 'heart-slot';
+      var px = document.createElement('div');
+      px.className = 'heart-px';
+      px.style.boxShadow = HEART_SHADOW;
+      slot.appendChild(px);
+      hudLives.appendChild(slot);
+      heartSlots.push(slot);
+    }
+  }
+  function updateHearts(livesLeft){
+    heartSlots.forEach(function(slot, i){
+      slot.classList.toggle('lost', i >= livesLeft);
+    });
+  }
+
+  // ---------- grid ----------
+  var holeEls = [];
+  var holesState = [];
+  var monsters = [];
+  var MONSTER_MOVE_INTERVAL = 700;
+  var MONSTER_HIT_COOLDOWN = 550;
+  function buildGrid(){
+    gridEl.innerHTML = '';
+    holeEls = [];
+    holesState = [];
+    for (var i=0;i<GRID_SIZE;i++){
+      var hole = document.createElement('div');
+      hole.className = 'hole';
+      hole.dataset.index = i;
+      (function(idx){
+        hole.addEventListener('click', function(){ handleHit(idx); });
+      })(i);
+      gridEl.appendChild(hole);
+      holeEls.push(hole);
+      holesState.push(null);
+    }
+  }
+
+  function spriteData(type){
+    if (type === 'coin') return { rows: COIN_ROWS, shadow: COIN_SHADOW };
+    if (type === 'monster') return { rows: MONSTER_ROWS, shadow: MONSTER_SHADOW };
+    return { rows: BOMB_ROWS, shadow: BOMB_SHADOW };
+  }
+
+  function makeSpriteEl(type){
+    var data = spriteData(type);
+    var cols = data.rows[0].length;
+    var rows = data.rows.length;
+    var wrap = document.createElement('div');
+    wrap.className = 'sprite-wrap';
+    wrap.style.width = (cols*PIX)+'px';
+    wrap.style.height = (rows*PIX)+'px';
+    var px = document.createElement('div');
+    px.className = 'sprite-px';
+    px.style.boxShadow = data.shadow;
+    wrap.appendChild(px);
+    return wrap;
+  }
+
+  function clearAllTargets(){
+    holesState.forEach(function(t, i){
+      if (t && t.type !== 'monster'){
+        clearTimeout(t.timeoutId);
+        if (t.el && t.el.parentNode) t.el.parentNode.removeChild(t.el);
+        holesState[i] = null;
+      }
+    });
+  }
+
+  function flashMonster(m){
+    if (!m.pxEl) return;
+    m.pxEl.classList.add('monster-flash');
+    setTimeout(function(){ m.pxEl.classList.remove('monster-flash'); }, 220);
+  }
+
+  function scheduleMonsterMove(m){
+    m.moveTimeoutId = setTimeout(function(){ moveMonster(m); }, MONSTER_MOVE_INTERVAL);
+  }
+
+  function moveMonster(m){
+    var free = [];
+    for (var i=0;i<holesState.length;i++){
+      if (i === m.holeIndex) continue;
+      if (holesState[i] === null) free.push(i);
+    }
+    if (free.length){
+      var newIdx = free[Math.floor(Math.random()*free.length)];
+      holesState[m.holeIndex] = null;
+      holeEls[newIdx].appendChild(m.el);
+      m.holeIndex = newIdx;
+      holesState[newIdx] = { type:'monster', ref:m };
+      if (m.pxEl){
+        m.pxEl.style.animation = 'none';
+        void m.pxEl.offsetHeight;
+        m.pxEl.style.animation = '';
+      }
+    }
+    scheduleMonsterMove(m);
+  }
+
+  function addMonster(){
+    var free = [];
+    for (var i=0;i<holesState.length;i++) if (holesState[i] === null) free.push(i);
+    if (!free.length){
+      setTimeout(addMonster, 300);
+      return;
+    }
+    var idx = free[Math.floor(Math.random()*free.length)];
+    var el = makeSpriteEl('monster');
+    var px = el.querySelector('.sprite-px');
+    holeEls[idx].appendChild(el);
+    var m = { holeIndex: idx, el: el, pxEl: px, cooldown:false, moveTimeoutId:null };
+    holesState[idx] = { type:'monster', ref:m };
+    monsters.push(m);
+    scheduleMonsterMove(m);
+  }
+
+  function monsterCountForWave(n){
+    var count = 0;
+    if (n >= 3) count = 1;
+    if (n >= 6) count = 2;
+    if (n === TOTAL_WAVES) count = 3;
+    return count;
+  }
+
+  function ensureMonsterCount(n){
+    var desired = monsterCountForWave(n);
+    while (monsters.length < desired){
+      addMonster();
+    }
+  }
+
+  function clearAllMonsters(){
+    monsters.forEach(function(m){
+      clearTimeout(m.moveTimeoutId);
+      if (holesState[m.holeIndex] && holesState[m.holeIndex].ref === m) holesState[m.holeIndex] = null;
+      if (m.el && m.el.parentNode) m.el.parentNode.removeChild(m.el);
+    });
+    monsters = [];
+  }
+
+  function removeTargetVisual(el, kind, cb){
+    if (!el) { if (cb) cb(); return; }
+    el.classList.add('leaving-' + kind);
+    setTimeout(function(){
+      if (el.parentNode) el.parentNode.removeChild(el);
+      if (cb) cb();
+    }, 200);
+  }
+
+  function showFloatingText(holeEl, text, color){
+    var f = document.createElement('div');
+    f.className = 'float-score';
+    f.textContent = text;
+    f.style.color = color;
+    holeEl.appendChild(f);
+    setTimeout(function(){ if (f.parentNode) f.parentNode.removeChild(f); }, 600);
+  }
+
+  function shakeScreen(){
+    screenEl.classList.add('shake');
+    setTimeout(function(){ screenEl.classList.remove('shake'); }, 320);
+  }
+
+  // ---------- game state ----------
+  var state = { score:0, lives:3, wave:1, spawnIntervalId:null, tickId:null, waveEndTime:0, cfg:null };
+
+  function waveConfig(n){
+    return {
+      spawnInterval: Math.max(360, 940 - n*70),
+      visibleTime: Math.max(520, 1250 - n*80),
+      bombChance: Math.min(0.42, 0.14 + n*0.035)
+    };
+  }
+
+  function updateScoreUI(){ hudScore.textContent = state.score; }
+  function updateWaveUI(){ hudWave.textContent = state.wave; }
+
+  function handleHit(idx){
+    var target = holesState[idx];
+    if (!target) return;
+
+    if (target.type === 'monster'){
+      var m = target.ref;
+      if (m.cooldown) return;
+      m.cooldown = true;
+      state.lives -= 1;
+      updateHearts(state.lives);
+      beep(90, 0.2, 'sawtooth', 0.06);
+      shakeScreen();
+      flashMonster(m);
+      setTimeout(function(){ m.cooldown = false; }, MONSTER_HIT_COOLDOWN);
+      if (state.lives <= 0) endGame(false);
+      return;
+    }
+
+    clearTimeout(target.timeoutId);
+    var type = target.type;
+    var holeEl = holeEls[idx];
+    holesState[idx] = null;
+
+    if (type === 'coin'){
+      state.score += 10;
+      updateScoreUI();
+      beep(880, 0.08, 'square', 0.045);
+      showFloatingText(holeEl, '+10', 'var(--cyan)');
+      removeTargetVisual(target.el, 'good');
+    } else {
+      state.lives -= 1;
+      updateHearts(state.lives);
+      beep(120, 0.18, 'sawtooth', 0.06);
+      shakeScreen();
+      removeTargetVisual(target.el, 'bad');
+      if (state.lives <= 0){
+        endGame(false);
+      }
+    }
+  }
+
+  function autoRemove(idx){
+    var target = holesState[idx];
+    if (!target) return;
+    holesState[idx] = null;
+    removeTargetVisual(target.el, 'timeout');
+  }
+
+  function spawnAttempt(){
+    var free = [];
+    for (var i=0;i<holesState.length;i++) if (holesState[i] === null) free.push(i);
+    if (!free.length) return;
+    var idx = free[Math.floor(Math.random()*free.length)];
+    var isBomb = Math.random() < state.cfg.bombChance;
+    var type = isBomb ? 'bomb' : 'coin';
+    var el = makeSpriteEl(type);
+    holeEls[idx].appendChild(el);
+    var timeoutId = setTimeout(function(){ autoRemove(idx); }, state.cfg.visibleTime);
+    holesState[idx] = { type:type, el:el, timeoutId:timeoutId };
+  }
+
+  function showBanner(text, ms){
+    waveBanner.textContent = text;
+    waveBanner.classList.add('show');
+    setTimeout(function(){ waveBanner.classList.remove('show'); }, ms);
+  }
+
+  function tickWave(){
+    var remaining = state.waveEndTime - Date.now();
+    var pct = Math.max(0, remaining / WAVE_DURATION * 100);
+    waveBar.style.width = pct + '%';
+    if (remaining <= 0) endWaveTransition();
+  }
+
+  function startWave(n){
+    state.wave = n;
+    updateWaveUI();
+    state.cfg = waveConfig(n);
+    state.waveEndTime = Date.now() + WAVE_DURATION;
+    clearInterval(state.spawnIntervalId);
+    clearInterval(state.tickId);
+    state.spawnIntervalId = setInterval(spawnAttempt, state.cfg.spawnInterval);
+    state.tickId = setInterval(tickWave, 100);
+    ensureMonsterCount(n);
+    var justAddedMonster = monsterCountForWave(n) > monsterCountForWave(n-1);
+    showBanner(justAddedMonster ? ('FASE ' + n + ' — MONSTRO À SOLTA!') : ('FASE ' + n), 1300);
+    beep(520, 0.07, 'square', 0.03);
+  }
+
+  function endWaveTransition(){
+    clearInterval(state.spawnIntervalId);
+    clearInterval(state.tickId);
+    clearAllTargets();
+    if (state.wave < TOTAL_WAVES){
+      showBanner('FASE ' + state.wave + ' CONCLUÍDA!', 1300);
+      beep(660, 0.08, 'square', 0.03);
+      setTimeout(function(){ startWave(state.wave + 1); }, 1400);
+    } else {
+      endGame(true);
+    }
+  }
+
+  function tier(score){
+    if (score >= 600) return 'LENDA DO FLIPERAMA';
+    if (score >= 350) return 'REFLEXO DE AÇO';
+    if (score >= 150) return 'CAÇADOR DE PIXELS';
+    return 'NOVATO DE FLIPERAMA';
+  }
+
+  function endGame(won){
+    clearInterval(state.spawnIntervalId);
+    clearInterval(state.tickId);
+    clearAllTargets();
+    clearAllMonsters();
+    if (won){
+      beep(660,0.1,'square',0.04);
+      setTimeout(function(){ beep(880,0.12,'square',0.04); }, 120);
+      setTimeout(function(){ beep(1100,0.16,'square',0.04); }, 240);
+    } else {
+      beep(300,0.16,'sawtooth',0.05);
+      setTimeout(function(){ beep(180,0.22,'sawtooth',0.05); }, 150);
+    }
+    endTitle.textContent = won ? 'VOCÊ SOBREVIVEU!' : 'FIM DE JOGO';
+    endSub.textContent = won ? 'Todas as 8 fases concluídas.' : ('Você chegou até a fase ' + state.wave + '.');
+    endScore.textContent = state.score;
+    endTier.textContent = tier(state.score);
+    inputName.value = '';
+    inputComment.value = '';
+    formError.style.display = 'none';
+    btnPublish.disabled = false;
+    btnPublish.textContent = 'GRAVAR NO MURAL';
+    switchView('end');
+  }
+
+  function startGame(){
+    clearAllMonsters();
+    state.score = 0;
+    state.lives = 3;
+    state.wave = 1;
+    updateScoreUI();
+    buildHearts();
+    updateHearts(3);
+    buildGrid();
+    switchView('play');
+    startWave(1);
+  }
+
+  // ---------- wall / storage ----------
+  function escapeNode(text){
+    return document.createTextNode(text == null ? '' : String(text));
+  }
+
+  function renderWall(entries){
+    wallList.innerHTML = '';
+    if (!entries.length){
+      wallStatus.textContent = 'Ainda ninguém publicou. Seja o primeiro!';
+      return;
+    }
+    wallStatus.textContent = entries.length + ' jogador(es) no mural';
+    entries.slice(0, 50).forEach(function(entry, i){
+      var row = document.createElement('div');
+      row.className = 'wall-row';
+
+      var rank = document.createElement('div');
+      rank.className = 'wall-rank' + (i===0?' gold':i===1?' silver':i===2?' bronze':'');
+      rank.textContent = '#' + (i+1);
+
+      var main = document.createElement('div');
+      main.className = 'wall-main';
+
+      var nameRow = document.createElement('div');
+      nameRow.className = 'wall-name-row';
+      var nameEl = document.createElement('span');
+      nameEl.className = 'wall-name';
+      nameEl.appendChild(escapeNode(entry.name || 'Anônimo'));
+      var scoreEl = document.createElement('span');
+      scoreEl.className = 'wall-score';
+      scoreEl.textContent = (entry.score || 0) + ' PTS';
+      nameRow.appendChild(nameEl);
+      nameRow.appendChild(scoreEl);
+
+      var commentEl = document.createElement('div');
+      var hasComment = entry.comment && entry.comment.trim().length;
+      commentEl.className = 'wall-comment' + (hasComment ? '' : ' empty');
+      commentEl.appendChild(escapeNode(hasComment ? ('"' + entry.comment.trim() + '"') : 'sem comentário'));
+
+      main.appendChild(nameRow);
+      main.appendChild(commentEl);
+      row.appendChild(rank);
+      row.appendChild(main);
+      wallList.appendChild(row);
+    });
+  }
+
+  function showWall(){
+    switchView('wall');
+    wallStatus.textContent = 'Carregando mural...';
+    wallList.innerHTML = '';
+    if (!firebaseReady){
+      wallStatus.textContent = 'Mural não configurado ainda — preencha FIREBASE_CONFIG no código.';
+      return;
+    }
+    db.ref('entries').once('value').then(function(snapshot){
+      var entries = [];
+      snapshot.forEach(function(child){ entries.push(child.val()); });
+      entries.sort(function(a,b){ return (b.score||0) - (a.score||0); });
+      renderWall(entries);
+    }).catch(function(){
+      wallStatus.textContent = 'Não foi possível carregar o mural agora.';
+    });
+  }
+
+  formPublish.addEventListener('submit', function(e){
+    e.preventDefault();
+    var name = inputName.value.trim();
+    if (!name){
+      formError.textContent = 'Digite um nome antes de publicar.';
+      formError.style.display = 'block';
+      inputName.focus();
+      return;
+    }
+    if (!firebaseReady){
+      formError.textContent = 'Mural não configurado ainda — preencha FIREBASE_CONFIG no código.';
+      formError.style.display = 'block';
+      return;
+    }
+    formError.style.display = 'none';
+    btnPublish.disabled = true;
+    btnPublish.textContent = 'GRAVANDO...';
+    var comment = inputComment.value.trim();
+    var entry = {
+      name: name.slice(0, 18),
+      comment: comment.slice(0, 140),
+      score: state.score,
+      wave: state.wave,
+      ts: Date.now()
+    };
+    db.ref('entries').push(entry).then(function(){
+      showWall();
+    }).catch(function(){
+      btnPublish.disabled = false;
+      btnPublish.textContent = 'GRAVAR NO MURAL';
+      formError.textContent = 'Não foi possível publicar agora. Tente de novo.';
+      formError.style.display = 'block';
+    });
+  });
+
+  $('btn-skip').addEventListener('click', function(){ showWall(); });
+  $('btn-again').addEventListener('click', function(){ switchView('start'); });
+  $('btn-start').addEventListener('click', startGame);
+  $('btn-mute').addEventListener('click', function(){
+    muted = !muted;
+    $('btn-mute').textContent = muted ? '🔇' : '🔊';
+  });
+
+})();
+</script>
+</body>
+</html>
